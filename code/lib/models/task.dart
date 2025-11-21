@@ -20,6 +20,11 @@ class Task {
   final double? longitude;
   final String? locationName;
 
+  // OFFLINE-FIRST / SYNC
+  final DateTime updatedAt;
+  final String syncStatus;        // 'synced', 'pending', 'error'
+  final String? serverId;         // ID retornado pelo servidor
+
   Task({
     this.id,
     required this.title,
@@ -33,14 +38,20 @@ class Task {
     this.latitude,
     this.longitude,
     this.locationName,
+    DateTime? updatedAt,
+    this.syncStatus = 'pending',
+    this.serverId,
   }) :
     createdAt = createdAt ?? DateTime.now(),
+    updatedAt = updatedAt ?? DateTime.now(),
     photoPaths = photoPaths ?? [];
 
   // Getters auxiliares
   bool get hasPhoto => photoPaths.isNotEmpty;
   bool get hasLocation => latitude != null && longitude != null;
   bool get wasCompletedByShake => completedBy == 'shake';
+  bool get isSynced => syncStatus == 'synced';
+  bool get isPending => syncStatus == 'pending';
 
   Map<String, dynamic> toMap() {
     return {
@@ -57,6 +68,27 @@ class Task {
       'latitude': latitude,
       'longitude': longitude,
       'locationName': locationName,
+      'updatedAt': updatedAt.toIso8601String(),
+      'syncStatus': syncStatus,
+      'serverId': serverId,
+    };
+  }
+
+  // Serialização para API (sem campos internos)
+  Map<String, dynamic> toJson() {
+    return {
+      if (serverId != null) 'id': serverId,
+      'title': title,
+      'description': description,
+      'priority': priority,
+      'completed': completed,
+      'createdAt': createdAt.toIso8601String(),
+      'updatedAt': updatedAt.toIso8601String(),
+      if (completedAt != null) 'completedAt': completedAt!.toIso8601String(),
+      if (completedBy != null) 'completedBy': completedBy,
+      if (latitude != null) 'latitude': latitude,
+      if (longitude != null) 'longitude': longitude,
+      if (locationName != null) 'locationName': locationName,
     };
   }
 
@@ -92,6 +124,34 @@ class Task {
       latitude: map['latitude'] as double?,
       longitude: map['longitude'] as double?,
       locationName: map['locationName'] as String?,
+      updatedAt: map['updatedAt'] != null 
+          ? DateTime.parse(map['updatedAt'] as String)
+          : DateTime.now(),
+      syncStatus: map['syncStatus'] as String? ?? 'pending',
+      serverId: map['serverId'] as String?,
+    );
+  }
+
+  // Deserialização da API
+  factory Task.fromJson(Map<String, dynamic> json) {
+    return Task(
+      serverId: json['id']?.toString(),
+      title: json['title'] as String,
+      description: json['description'] as String,
+      priority: json['priority'] as String,
+      completed: json['completed'] as bool? ?? false,
+      createdAt: DateTime.parse(json['createdAt'] as String),
+      updatedAt: json['updatedAt'] != null 
+          ? DateTime.parse(json['updatedAt'] as String)
+          : DateTime.now(),
+      completedAt: json['completedAt'] != null 
+          ? DateTime.parse(json['completedAt'] as String)
+          : null,
+      completedBy: json['completedBy'] as String?,
+      latitude: json['latitude'] as double?,
+      longitude: json['longitude'] as double?,
+      locationName: json['locationName'] as String?,
+      syncStatus: 'synced',
     );
   }
 
@@ -108,6 +168,9 @@ class Task {
     double? latitude,
     double? longitude,
     String? locationName,
+    DateTime? updatedAt,
+    String? syncStatus,
+    String? serverId,
   }) {
     return Task(
       id: id ?? this.id,
@@ -122,6 +185,9 @@ class Task {
       latitude: latitude ?? this.latitude,
       longitude: longitude ?? this.longitude,
       locationName: locationName ?? this.locationName,
+      updatedAt: updatedAt ?? this.updatedAt,
+      syncStatus: syncStatus ?? this.syncStatus,
+      serverId: serverId ?? this.serverId,
     );
   }
 }

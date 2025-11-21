@@ -38,6 +38,8 @@ dependencies:
   vibration: ^3.1.4              # Feedback tátil
   geolocator: ^10.1.0            # GPS
   geocoding: ^2.1.1              # Endereços
+  connectivity_plus: ^6.0.5      # Detector de conectividade
+  http: ^1.1.0                   # Cliente HTTP para API REST
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
