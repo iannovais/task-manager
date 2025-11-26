@@ -22,7 +22,7 @@ class DatabaseService {
 
     return await openDatabase(
       path,
-      version: 7,  // bump para corrigir sync_queue
+      version: 8, 
       onCreate: _createDB,
       onUpgrade: _onUpgrade,
     );
@@ -33,7 +33,6 @@ class DatabaseService {
     const textType = 'TEXT NOT NULL';
     const intType = 'INTEGER NOT NULL';
 
-    // Tabela de tarefas
     await db.execute('''
       CREATE TABLE tasks (
         id $idType,
@@ -54,7 +53,6 @@ class DatabaseService {
       )
     ''');
 
-    // Tabela de fila de sincronização
     await db.execute('''
       CREATE TABLE sync_queue (
         id $idType,
@@ -65,10 +63,21 @@ class DatabaseService {
         retryCount INTEGER DEFAULT 0
       )
     ''');
+
+    await db.execute('''
+      CREATE TABLE server_mirror (
+        serverId TEXT PRIMARY KEY,
+        title $textType,
+        description $textType,
+        priority $textType,
+        completed $intType,
+        updatedAt $textType,
+        syncedData TEXT
+      )
+    ''');
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    // Migração incremental para cada versão
     if (oldVersion < 2) {
       await db.execute('ALTER TABLE tasks ADD COLUMN photoPath TEXT');
     }
@@ -81,11 +90,10 @@ class DatabaseService {
       await db.execute('ALTER TABLE tasks ADD COLUMN longitude REAL');
       await db.execute('ALTER TABLE tasks ADD COLUMN locationName TEXT');
     }
-    // v5: adiciona coluna photoPaths (JSON lista) e migra valores de photoPath existentes
+
     if (oldVersion < 5) {
       await db.execute('ALTER TABLE tasks ADD COLUMN photoPaths TEXT');
 
-      // migrar valores antigos de photoPath para photoPaths (JSON array)
       final rows = await db.query('tasks', columns: ['id', 'photoPath']);
       for (final row in rows) {
         if (row['photoPath'] != null) {
@@ -96,9 +104,8 @@ class DatabaseService {
         }
       }
     }
-    // v6: adiciona suporte offline-first (updatedAt, syncStatus, serverId, sync_queue)
+
     if (oldVersion < 6) {
-      // Verificar se as colunas já existem antes de adicionar
       final columns = await db.rawQuery('PRAGMA table_info(tasks)');
       final columnNames = columns.map((col) => col['name'] as String).toSet();
       
@@ -112,16 +119,13 @@ class DatabaseService {
         await db.execute('ALTER TABLE tasks ADD COLUMN serverId TEXT');
       }
 
-      // Preencher updatedAt com createdAt para tarefas existentes
       await db.execute('UPDATE tasks SET updatedAt = createdAt WHERE updatedAt IS NULL');
 
-      // Verificar se tabela sync_queue já existe
       final tables = await db.rawQuery(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='sync_queue'"
       );
       
       if (tables.isEmpty) {
-        // Criar tabela sync_queue
         await db.execute('''
           CREATE TABLE sync_queue (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -135,25 +139,20 @@ class DatabaseService {
       }
     }
     
-    // v7: Garantir que sync_queue existe e está correta
     if (oldVersion < 7) {
-      // Recriar sync_queue se necessário
       final tables = await db.rawQuery(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='sync_queue'"
       );
       
       if (tables.isNotEmpty) {
-        // Verificar se tem todas as colunas necessárias
         final columns = await db.rawQuery('PRAGMA table_info(sync_queue)');
         final columnNames = columns.map((col) => col['name'] as String).toSet();
         
         if (!columnNames.contains('operation')) {
-          // Recriar tabela
           await db.execute('DROP TABLE IF EXISTS sync_queue');
         }
       }
       
-      // Criar tabela sync_queue se não existir ou foi deletada
       final checkAgain = await db.rawQuery(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='sync_queue'"
       );
@@ -171,10 +170,30 @@ class DatabaseService {
         ''');
       }
     }
-    print('✅ Banco migrado de v$oldVersion para v$newVersion');
+    
+    if (oldVersion < 8) {
+      final tables = await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='server_mirror'"
+      );
+      
+      if (tables.isEmpty) {
+        await db.execute('''
+          CREATE TABLE server_mirror (
+            serverId TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL,
+            priority TEXT NOT NULL,
+            completed INTEGER NOT NULL,
+            updatedAt TEXT NOT NULL,
+            syncedData TEXT
+          )
+        ''');
+      }
+    }
+    
+    print('Banco migrado de v$oldVersion para v$newVersion');
   }
 
-  // CRUD Methods
   Future<Task> create(Task task) async {
     final db = await instance.database;
     final id = await db.insert('tasks', task.toMap());
@@ -221,7 +240,6 @@ class DatabaseService {
     );
   }
 
-  // Método especial: buscar tarefas por proximidade
   Future<List<Task>> getTasksNearLocation({
     required double latitude,
     required double longitude,
@@ -232,7 +250,6 @@ class DatabaseService {
     return allTasks.where((task) {
       if (!task.hasLocation) return false;
       
-      // Cálculo de distância usando fórmula de Haversine (simplificada)
       final latDiff = (task.latitude! - latitude).abs();
       final lonDiff = (task.longitude! - longitude).abs();
       final distance = ((latDiff * 111000) + (lonDiff * 111000)) / 2;
@@ -241,12 +258,9 @@ class DatabaseService {
     }).toList();
   }
 
-  // =================== SYNC QUEUE METHODS ===================
-  
-  /// Adiciona uma operação à fila de sincronização
   Future<void> addToSyncQueue({
     required int taskId,
-    required String operation, // 'CREATE', 'UPDATE', 'DELETE'
+    required String operation, 
     String? payload,
   }) async {
     final db = await instance.database;
@@ -259,19 +273,16 @@ class DatabaseService {
     });
   }
 
-  /// Obtém todos os itens pendentes na fila de sincronização
   Future<List<Map<String, dynamic>>> getSyncQueue() async {
     final db = await instance.database;
     return await db.query('sync_queue', orderBy: 'timestamp ASC');
   }
 
-  /// Remove um item da fila de sincronização
   Future<void> removeFromSyncQueue(int queueId) async {
     final db = await instance.database;
     await db.delete('sync_queue', where: 'id = ?', whereArgs: [queueId]);
   }
 
-  /// Incrementa o contador de tentativas de um item na fila
   Future<void> incrementSyncRetry(int queueId) async {
     final db = await instance.database;
     await db.rawUpdate(
@@ -280,7 +291,72 @@ class DatabaseService {
     );
   }
 
-  /// Limpa toda a fila de sincronização
+  Future<void> saveToServerMirror(Task task) async {
+    if (task.serverId == null) return;
+    
+    final db = await instance.database;
+    await db.insert(
+      'server_mirror',
+      {
+        'serverId': task.serverId!,
+        'title': task.title,
+        'description': task.description ?? '',
+        'priority': task.priority,
+        'completed': task.completed ? 1 : 0,
+        'updatedAt': task.updatedAt.toIso8601String(),
+        'syncedData': jsonEncode(task.toMap()),
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<Task?> fetchFromServerMirror(String serverId) async {
+    final db = await instance.database;
+    final maps = await db.query(
+      'server_mirror',
+      where: 'serverId = ?',
+      whereArgs: [serverId],
+    );
+
+    if (maps.isEmpty) return null;
+
+    final data = maps.first;
+    return Task(
+      serverId: data['serverId'] as String,
+      title: data['title'] as String,
+      description: data['description'] as String,
+      priority: data['priority'] as String,
+      completed: (data['completed'] as int) == 1,
+      updatedAt: DateTime.parse(data['updatedAt'] as String),
+      syncStatus: 'synced',
+    );
+  }
+
+  Future<void> simulateServerEdit(String serverId, {
+    required String newTitle,
+    required DateTime serverTimestamp,
+  }) async {
+    final db = await instance.database;
+    await db.update(
+      'server_mirror',
+      {
+        'title': newTitle,
+        'updatedAt': serverTimestamp.toIso8601String(),
+      },
+      where: 'serverId = ?',
+      whereArgs: [serverId],
+    );
+    print('Simulado: Servidor editou tarefa $serverId com timestamp $serverTimestamp');
+  }
+
+  Future<void> incrementSyncRetry_OLD(int queueId) async {
+    final db = await instance.database;
+    await db.rawUpdate(
+      'UPDATE sync_queue SET retryCount = retryCount + 1 WHERE id = ?',
+      [queueId],
+    );
+  }
+
   Future<void> clearSyncQueue() async {
     final db = await instance.database;
     await db.delete('sync_queue');

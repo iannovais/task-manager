@@ -20,7 +20,7 @@ class TaskListScreen extends StatefulWidget {
 class _TaskListScreenState extends State<TaskListScreen> {
   List<Task> _tasks = [];
   String _filter = 'all';
-  String _sortBy = 'date'; // date, priority, title
+  String _sortBy = 'date'; 
   String _searchQuery = '';
   bool _isLoading = true;
   bool _isOnline = false;
@@ -48,13 +48,10 @@ class _TaskListScreenState extends State<TaskListScreen> {
   }
 
   Future<void> _initializeServices() async {
-    // Inicializar ConnectivityService
     await ConnectivityService.instance.initialize();
     
-    // Inicializar SyncService
     await SyncService.instance.initialize();
 
-    // Monitorar mudanças de conectividade
     _connectivitySubscription = ConnectivityService.instance.onConnectivityChanged.listen((isOnline) {
       if (mounted) {
         final wasOffline = !_isOnline;
@@ -75,7 +72,6 @@ class _TaskListScreenState extends State<TaskListScreen> {
             ),
           );
           
-          // Apenas mostrar mensagem de sincronização se estava offline
           if (wasOffline) {
             _shouldShowSyncNotification = true;
           }
@@ -98,12 +94,14 @@ class _TaskListScreenState extends State<TaskListScreen> {
       }
     });
 
-    // Monitorar eventos de sincronização
     _syncSubscription = SyncService.instance.onSyncEvent.listen((event) {
       if (mounted) {
         setState(() => _syncStatus = event);
         
-        // Mostrar notificação apenas se estava offline e agora está online
+        if (event == 'success' || event == 'error') {
+          _loadTasks();
+        }
+        
         if (event == 'success' && _shouldShowSyncNotification) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -137,13 +135,11 @@ class _TaskListScreenState extends State<TaskListScreen> {
       }
     });
 
-    // Definir status inicial
     setState(() {
       _isOnline = ConnectivityService.instance.isOnline;
     });
   }
 
-  // SHAKE DETECTION
   void _setupShakeDetection() {
     SensorService.instance.startShakeDetection(() {
       _showShakeDialog();
@@ -232,7 +228,6 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
       await DatabaseService.instance.update(updated);
       
-      // Adicionar à fila de sincronização
       SyncService.instance.queueOperation(
         taskId: updated.id!,
         operation: updated.serverId == null ? 'CREATE' : 'UPDATE',
@@ -240,7 +235,6 @@ class _TaskListScreenState extends State<TaskListScreen> {
       
       Navigator.pop(context);
       
-      // Atualizar estado local
       setState(() {
         final index = _tasks.indexWhere((t) => t.id == task.id);
         if (index != -1) {
@@ -303,7 +297,6 @@ class _TaskListScreenState extends State<TaskListScreen> {
   List<Task> get _filteredTasks {
     var filtered = _tasks;
 
-    // Aplicar busca por texto
     if (_searchQuery.isNotEmpty) {
       filtered = filtered.where((t) => 
         t.title.toLowerCase().contains(_searchQuery.toLowerCase()) ||
@@ -311,7 +304,6 @@ class _TaskListScreenState extends State<TaskListScreen> {
       ).toList();
     }
 
-    // Aplicar filtros
     switch (_filter) {
       case 'pending':
         filtered = filtered.where((t) => !t.completed).toList();
@@ -328,15 +320,10 @@ class _TaskListScreenState extends State<TaskListScreen> {
       case 'high_priority':
         filtered = filtered.where((t) => t.priority == 'high').toList();
         break;
-      case 'nearby':
-        // Já filtrado no método _filterByNearby
-        break;
       default:
-        // 'all' - sem filtro adicional
         break;
     }
 
-    // Aplicar ordenação
     switch (_sortBy) {
       case 'priority':
         filtered.sort((a, b) {
@@ -368,6 +355,72 @@ class _TaskListScreenState extends State<TaskListScreen> {
       'pending': pending,
       'completionRate': completionRate,
     };
+  }
+
+  Future<void> _testLWW() async {
+    final tasksWithServerId = _tasks.where((t) => t.serverId != null).toList();
+    
+    if (tasksWithServerId.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.warning, color: Colors.white),
+                SizedBox(width: 8),
+                Text('Crie uma tarefa online primeiro!'),
+              ],
+            ),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+      return;
+    }
+
+    final task = tasksWithServerId.first;
+    final db = await DatabaseService.instance.database;
+    
+    await db.rawUpdate('''
+      UPDATE server_mirror 
+      SET title = ?, updatedAt = ?
+      WHERE serverId = ?
+    ''', [
+      '${task.title} [TESTE VENCEU]',
+      DateTime.now().add(const Duration(minutes: 3)).toIso8601String(),
+      task.serverId,
+    ]);
+
+    if (mounted) {
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.science, color: Colors.orange),
+              SizedBox(width: 8),
+              Text('Teste LWW Configurado'),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Tarefa: "${task.title}"', style: const TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 16),
+              const Text('Servidor simulado editou com timestamp futuro!'),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Show paizão'),
+            ),
+          ],
+        ),
+      );
+    }
   }
 
   Future<void> _filterByNearby() async {
@@ -448,7 +501,6 @@ class _TaskListScreenState extends State<TaskListScreen> {
           }
         }
         
-        // Adicionar à fila de sincronização antes de deletar
         if (task.serverId != null) {
           await SyncService.instance.queueOperation(
             taskId: task.id!,
@@ -497,7 +549,6 @@ class _TaskListScreenState extends State<TaskListScreen> {
         syncStatus: 'pending',
       );
 
-      // Atualizar estado local imediatamente
       setState(() {
         final index = _tasks.indexWhere((t) => t.id == task.id);
         if (index != -1) {
@@ -505,16 +556,13 @@ class _TaskListScreenState extends State<TaskListScreen> {
         }
       });
 
-      // Salvar no banco em background
       await DatabaseService.instance.update(updated);
       
-      // Adicionar à fila de sincronização em background
       SyncService.instance.queueOperation(
         taskId: updated.id!,
         operation: updated.serverId == null ? 'CREATE' : 'UPDATE',
       );
     } catch (e) {
-      // Se der erro, reverter o estado
       await _loadTasks();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -543,7 +591,6 @@ class _TaskListScreenState extends State<TaskListScreen> {
               ),
             ),
             const SizedBox(width: 8),
-            // Indicador de conectividade
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
               decoration: BoxDecoration(
@@ -575,7 +622,6 @@ class _TaskListScreenState extends State<TaskListScreen> {
         backgroundColor: Colors.blue,
         foregroundColor: Colors.white,
         actions: [
-          // Menu de Ordenação
           PopupMenuButton<String>(
             icon: const Icon(Icons.sort),
             tooltip: 'Ordenar',
@@ -615,15 +661,18 @@ class _TaskListScreenState extends State<TaskListScreen> {
               ),
             ],
           ),
-          // Menu de Filtros
           PopupMenuButton<String>(
             icon: const Icon(Icons.filter_list),
             tooltip: 'Filtrar',
             onSelected: (value) {
-              setState(() {
-                _filter = value;
-                _loadTasks();
-              });
+              if (value == 'lww_test') {
+                _testLWW();
+              } else {
+                setState(() {
+                  _filter = value;
+                  _loadTasks();
+                });
+              }
             },
             itemBuilder: (context) => [
               PopupMenuItem(
@@ -686,6 +735,17 @@ class _TaskListScreenState extends State<TaskListScreen> {
                   ],
                 ),
               ),
+              const PopupMenuDivider(),
+              PopupMenuItem(
+                value: 'lww_test',
+                child: Row(
+                  children: [
+                    const Icon(Icons.science, color: Colors.orange),
+                    const SizedBox(width: 8),
+                    Text('Testar LWW', style: TextStyle(color: Colors.orange)),
+                  ],
+                ),
+              ),
             ],
           ),
         ],
@@ -696,7 +756,6 @@ class _TaskListScreenState extends State<TaskListScreen> {
             ? const Center(child: CircularProgressIndicator())
             : Column(
                 children: [
-                  // CARD DE ESTATÍSTICAS
                   Container(
                     margin: const EdgeInsets.all(16),
                     padding: const EdgeInsets.all(20),
@@ -745,7 +804,6 @@ class _TaskListScreenState extends State<TaskListScreen> {
                     ),
                   ),
 
-                  // BARRA DE BUSCA
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
                     child: TextField(
@@ -777,7 +835,6 @@ class _TaskListScreenState extends State<TaskListScreen> {
                   ),
                   const SizedBox(height: 8),
 
-                  // CHIPS DE FILTRO ATIVO
                   if (_filter != 'all' || _sortBy != 'date' || _searchQuery.isNotEmpty)
                     Container(
                       height: 50,
@@ -831,7 +888,6 @@ class _TaskListScreenState extends State<TaskListScreen> {
                       ),
                     ),
 
-                  // LISTA DE TAREFAS
                   Expanded(
                     child: filteredTasks.isEmpty
                         ? _buildEmptyState()
@@ -878,7 +934,6 @@ class _TaskListScreenState extends State<TaskListScreen> {
     );
   }
 
-  // MÉTODOS AUXILIARES PARA FILTROS
   IconData _getFilterIcon(String filter) {
     switch (filter) {
       case 'pending':

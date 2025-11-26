@@ -26,10 +26,8 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
   bool _completed = false;
   bool _isLoading = false;
   
-  // FOTOS (agora múltiplas)
   List<String> _photoPaths = [];
   
-  // GPS
   double? _latitude;
   double? _longitude;
   String? _locationName;
@@ -41,12 +39,12 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
     if (widget.task != null) {
       _titleController.text = widget.task!.title;
       _descriptionController.text = widget.task!.description;
-  _priority = widget.task!.priority;
-  _completed = widget.task!.completed;
-  _photoPaths = widget.task!.photoPaths;
-  _latitude = widget.task!.latitude;
-  _longitude = widget.task!.longitude;
-  _locationName = widget.task!.locationName;
+      _priority = widget.task!.priority;
+      _completed = widget.task!.completed;
+      _photoPaths = widget.task!.photoPaths;
+      _latitude = widget.task!.latitude;
+      _longitude = widget.task!.longitude;
+      _locationName = widget.task!.locationName;
     }
   }
 
@@ -57,7 +55,6 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
     super.dispose();
   }
 
-  // CÂMERA METHODS
   Future<void> _takePicture() async {
     final photoPath = await CameraService.instance.takePicture(context);
     
@@ -66,7 +63,7 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('📷 Foto capturada!'),
+          content: Text('Foto capturada!'),
           backgroundColor: Colors.green,
           duration: Duration(seconds: 2),
         ),
@@ -89,7 +86,7 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
     final deleted = await CameraService.instance.deletePhoto(path);
     setState(() => _photoPaths.removeAt(index));
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(deleted ? '🗑️ Foto removida' : '⚠️ Não foi possível remover a foto')),
+      SnackBar(content: Text(deleted ? 'Foto removida' : 'Não foi possível remover a foto')),
     );
   }
 
@@ -114,7 +111,6 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
     );
   }
 
-  // GPS METHODS
   void _showLocationPicker() {
     showModalBottomSheet(
       context: context,
@@ -149,7 +145,7 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
       _locationName = null;
     });
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('📍 Localização removida')),
+      const SnackBar(content: Text('Localização removida')),
     );
   }
 
@@ -160,7 +156,6 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
 
     try {
       if (widget.task == null) {
-        // CRIAR
         final newTask = Task(
           title: _titleController.text.trim(),
           description: _descriptionController.text.trim(),
@@ -174,7 +169,6 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
         );
         final created = await DatabaseService.instance.create(newTask);
         
-        // Adicionar à fila de sincronização
         await SyncService.instance.queueOperation(
           taskId: created.id!,
           operation: 'CREATE',
@@ -189,7 +183,6 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
           );
         }
       } else {
-        // ATUALIZAR
         final updatedTask = widget.task!.copyWith(
           title: _titleController.text.trim(),
           description: _descriptionController.text.trim(),
@@ -204,7 +197,6 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
         );
         await DatabaseService.instance.update(updatedTask);
         
-        // Adicionar à fila de sincronização
         await SyncService.instance.queueOperation(
           taskId: updatedTask.id!,
           operation: updatedTask.serverId == null ? 'CREATE' : 'UPDATE',
@@ -255,7 +247,6 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // TÍTULO
                     TextFormField(
                       controller: _titleController,
                       decoration: const InputDecoration(
@@ -279,7 +270,6 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                     
                     const SizedBox(height: 16),
                     
-                    // DESCRIÇÃO
                     TextFormField(
                       controller: _descriptionController,
                       decoration: const InputDecoration(
@@ -296,7 +286,6 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                     
                     const SizedBox(height: 16),
                     
-                    // PRIORIDADE
                     DropdownButtonFormField<String>(
                       value: _priority,
                       decoration: const InputDecoration(
@@ -317,7 +306,6 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                     
                     const SizedBox(height: 24),
                     
-                    // SWITCH COMPLETA
                     SwitchListTile(
                       title: const Text('Tarefa Completa'),
                       subtitle: Text(_completed ? 'Sim' : 'Não'),
@@ -332,7 +320,6 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                     
                     const Divider(height: 32),
                     
-                    // SEÇÃO FOTO
                     Row(
                       children: [
                         const Icon(Icons.photo_camera, color: Colors.blue),
@@ -345,7 +332,6 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                           ),
                         ),
                         const Spacer(),
-                        // botões para câmera/galeria
                         OutlinedButton.icon(
                           onPressed: _takePicture,
                           icon: const Icon(Icons.camera_alt),
@@ -408,7 +394,6 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                     
                     const Divider(height: 32),
                     
-                    // SEÇÃO LOCALIZAÇÃO
                     Row(
                       children: [
                         const Icon(Icons.location_on, color: Colors.blue),
@@ -464,7 +449,6 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                     
                     const SizedBox(height: 32),
                     
-                    // BOTÃO SALVAR
                     ElevatedButton.icon(
                       onPressed: _isLoading ? null : _saveTask,
                       icon: const Icon(Icons.save),

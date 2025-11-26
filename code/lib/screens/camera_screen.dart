@@ -41,7 +41,7 @@ class _CameraScreenState extends State<CameraScreen> {
         Navigator.pop(context, savedPath);
       }
     } catch (e) {
-      print('❌ Erro ao capturar: $e');
+      print('Erro ao capturar: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.red),

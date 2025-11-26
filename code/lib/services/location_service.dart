@@ -8,7 +8,7 @@ class LocationService {
   Future<bool> checkAndRequestPermission() async {
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
-      print('⚠️ Serviço de localização desabilitado');
+      print('Serviço de localização desabilitado');
       return false;
     }
 
@@ -16,17 +16,17 @@ class LocationService {
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
       if (permission == LocationPermission.denied) {
-        print('⚠️ Permissão negada');
+        print('Permissão negada');
         return false;
       }
     }
     
     if (permission == LocationPermission.deniedForever) {
-      print('⚠️ Permissão negada permanentemente');
+      print('Permissão negada permanentemente');
       return false;
     }
 
-    print('✅ Permissão de localização concedida');
+    print('Permissão de localização concedida');
     return true;
   }
 
@@ -39,7 +39,7 @@ class LocationService {
         desiredAccuracy: LocationAccuracy.high,
       );
     } catch (e) {
-      print('❌ Erro ao obter localização: $e');
+      print('Erro ao obter localização: $e');
       return null;
     }
   }
@@ -65,7 +65,6 @@ class LocationService {
     }
   }
 
-  // GEOCODING
   Future<String?> getAddressFromCoordinates(double lat, double lon) async {
     try {
       final placemarks = await placemarkFromCoordinates(lat, lon);
@@ -81,7 +80,7 @@ class LocationService {
         return parts.join(', ');
       }
     } catch (e) {
-      print('❌ Erro ao obter endereço: $e');
+      print('Erro ao obter endereço: $e');
     }
     return null;
   }
@@ -105,7 +104,7 @@ class LocationService {
         );
       }
     } catch (e) {
-      print('❌ Erro ao buscar endereço: $e');
+      print('Erro ao buscar endereço: $e');
     }
     return null;
   }
@@ -127,7 +126,7 @@ class LocationService {
         'longitude': position.longitude,
       };
     } catch (e) {
-      print('❌ Erro: $e');
+      print('Erro: $e');
       return null;
     }
   }
