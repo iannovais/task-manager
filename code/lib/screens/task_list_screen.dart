@@ -1,9 +1,12 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/task.dart';
 import '../services/database_service.dart';
 import '../services/sensor_service.dart';
 import '../services/location_service.dart';
 import '../services/camera_service.dart';
+import '../services/connectivity_service.dart';
+import '../services/sync_service.dart';
 import '../screens/task_form_screen.dart';
 import '../widgets/task_card.dart';
 
@@ -17,22 +20,126 @@ class TaskListScreen extends StatefulWidget {
 class _TaskListScreenState extends State<TaskListScreen> {
   List<Task> _tasks = [];
   String _filter = 'all';
+  String _sortBy = 'date'; 
+  String _searchQuery = '';
   bool _isLoading = true;
+  bool _isOnline = false;
+  String _syncStatus = 'idle';
+  bool _shouldShowSyncNotification = false;
+  StreamSubscription? _connectivitySubscription;
+  StreamSubscription? _syncSubscription;
+  final TextEditingController _searchController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
+    _initializeServices();
     _loadTasks();
-    _setupShakeDetection(); // INICIAR SHAKE
+    _setupShakeDetection();
   }
 
   @override
   void dispose() {
-    SensorService.instance.stop(); // PARAR SHAKE
+    SensorService.instance.stop();
+    _connectivitySubscription?.cancel();
+    _syncSubscription?.cancel();
+    _searchController.dispose();
     super.dispose();
   }
 
-  // SHAKE DETECTION
+  Future<void> _initializeServices() async {
+    await ConnectivityService.instance.initialize();
+    
+    await SyncService.instance.initialize();
+
+    _connectivitySubscription = ConnectivityService.instance.onConnectivityChanged.listen((isOnline) {
+      if (mounted) {
+        final wasOffline = !_isOnline;
+        setState(() => _isOnline = isOnline);
+        
+        if (isOnline) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Row(
+                children: [
+                  Icon(Icons.wifi, color: Colors.white),
+                  SizedBox(width: 8),
+                  Text('Conectado'),
+                ],
+              ),
+              backgroundColor: Colors.green,
+              duration: Duration(seconds: 2),
+            ),
+          );
+          
+          if (wasOffline) {
+            _shouldShowSyncNotification = true;
+          }
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Row(
+                children: [
+                  Icon(Icons.wifi_off, color: Colors.white),
+                  SizedBox(width: 8),
+                  Text('Modo Offline'),
+                ],
+              ),
+              backgroundColor: Colors.orange,
+              duration: Duration(seconds: 2),
+            ),
+          );
+          _shouldShowSyncNotification = false;
+        }
+      }
+    });
+
+    _syncSubscription = SyncService.instance.onSyncEvent.listen((event) {
+      if (mounted) {
+        setState(() => _syncStatus = event);
+        
+        if (event == 'success' || event == 'error') {
+          _loadTasks();
+        }
+        
+        if (event == 'success' && _shouldShowSyncNotification) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Row(
+                children: [
+                  Icon(Icons.check_circle, color: Colors.white),
+                  SizedBox(width: 8),
+                  Text('Dados sincronizados'),
+                ],
+              ),
+              backgroundColor: Colors.green,
+              duration: Duration(seconds: 2),
+            ),
+          );
+          _shouldShowSyncNotification = false;
+        } else if (event == 'error' && _shouldShowSyncNotification) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Row(
+                children: [
+                  Icon(Icons.error, color: Colors.white),
+                  SizedBox(width: 8),
+                  Text('Erro na sincronização'),
+                ],
+              ),
+              backgroundColor: Colors.red,
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    });
+
+    setState(() {
+      _isOnline = ConnectivityService.instance.isOnline;
+    });
+  }
+
   void _setupShakeDetection() {
     SensorService.instance.startShakeDetection(() {
       _showShakeDialog();
@@ -45,7 +152,13 @@ class _TaskListScreenState extends State<TaskListScreen> {
     if (pendingTasks.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('🎉 Nenhuma tarefa pendente!'),
+          content: Row(
+            children: [
+              Icon(Icons.celebration, color: Colors.white),
+              SizedBox(width: 8),
+              Text('Nenhuma tarefa pendente!'),
+            ],
+          ),
           backgroundColor: Colors.green,
         ),
       );
@@ -109,16 +222,36 @@ class _TaskListScreenState extends State<TaskListScreen> {
         completed: true,
         completedAt: DateTime.now(),
         completedBy: 'shake',
+        updatedAt: DateTime.now(),
+        syncStatus: 'pending',
       );
 
       await DatabaseService.instance.update(updated);
+      
+      SyncService.instance.queueOperation(
+        taskId: updated.id!,
+        operation: updated.serverId == null ? 'CREATE' : 'UPDATE',
+      );
+      
       Navigator.pop(context);
-      await _loadTasks();
+      
+      setState(() {
+        final index = _tasks.indexWhere((t) => t.id == task.id);
+        if (index != -1) {
+          _tasks[index] = updated;
+        }
+      });
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('✅ "${task.title}" completa via shake!'),
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle, color: Colors.white),
+                const SizedBox(width: 8),
+                Expanded(child: Text('"${task.title}" completa via shake!')),
+              ],
+            ),
             backgroundColor: Colors.green,
           ),
         );
@@ -162,17 +295,52 @@ class _TaskListScreenState extends State<TaskListScreen> {
   }
 
   List<Task> get _filteredTasks {
+    var filtered = _tasks;
+
+    if (_searchQuery.isNotEmpty) {
+      filtered = filtered.where((t) => 
+        t.title.toLowerCase().contains(_searchQuery.toLowerCase()) ||
+        (t.description?.toLowerCase().contains(_searchQuery.toLowerCase()) ?? false)
+      ).toList();
+    }
+
     switch (_filter) {
       case 'pending':
-        return _tasks.where((t) => !t.completed).toList();
+        filtered = filtered.where((t) => !t.completed).toList();
+        break;
       case 'completed':
-        return _tasks.where((t) => t.completed).toList();
-      case 'nearby':
-        // Implementar filtro de proximidade
-        return _tasks;
+        filtered = filtered.where((t) => t.completed).toList();
+        break;
+      case 'with_photo':
+        filtered = filtered.where((t) => t.hasPhoto).toList();
+        break;
+      case 'with_location':
+        filtered = filtered.where((t) => t.hasLocation).toList();
+        break;
+      case 'high_priority':
+        filtered = filtered.where((t) => t.priority == 'high').toList();
+        break;
       default:
-        return _tasks;
+        break;
     }
+
+    switch (_sortBy) {
+      case 'priority':
+        filtered.sort((a, b) {
+          const priorityOrder = {'high': 0, 'medium': 1, 'low': 2};
+          return (priorityOrder[a.priority] ?? 3).compareTo(priorityOrder[b.priority] ?? 3);
+        });
+        break;
+      case 'title':
+        filtered.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+        break;
+      case 'date':
+      default:
+        filtered.sort((a, b) => (b.createdAt ?? DateTime.now()).compareTo(a.createdAt ?? DateTime.now()));
+        break;
+    }
+
+    return filtered;
   }
 
   Map<String, int> get _statistics {
@@ -189,6 +357,72 @@ class _TaskListScreenState extends State<TaskListScreen> {
     };
   }
 
+  Future<void> _testLWW() async {
+    final tasksWithServerId = _tasks.where((t) => t.serverId != null).toList();
+    
+    if (tasksWithServerId.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.warning, color: Colors.white),
+                SizedBox(width: 8),
+                Text('Crie uma tarefa online primeiro!'),
+              ],
+            ),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+      return;
+    }
+
+    final task = tasksWithServerId.first;
+    final db = await DatabaseService.instance.database;
+    
+    await db.rawUpdate('''
+      UPDATE server_mirror 
+      SET title = ?, updatedAt = ?
+      WHERE serverId = ?
+    ''', [
+      '${task.title} [TESTE VENCEU]',
+      DateTime.now().add(const Duration(minutes: 3)).toIso8601String(),
+      task.serverId,
+    ]);
+
+    if (mounted) {
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.science, color: Colors.orange),
+              SizedBox(width: 8),
+              Text('Teste LWW Configurado'),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Tarefa: "${task.title}"', style: const TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 16),
+              const Text('Servidor simulado editou com timestamp futuro!'),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Show paizão'),
+            ),
+          ],
+        ),
+      );
+    }
+  }
+
   Future<void> _filterByNearby() async {
     final position = await LocationService.instance.getCurrentLocation();
     
@@ -196,7 +430,13 @@ class _TaskListScreenState extends State<TaskListScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('❌ Não foi possível obter localização'),
+            content: Row(
+              children: [
+                Icon(Icons.error, color: Colors.white),
+                SizedBox(width: 8),
+                Text('Não foi possível obter localização'),
+              ],
+            ),
             backgroundColor: Colors.red,
           ),
         );
@@ -213,12 +453,20 @@ class _TaskListScreenState extends State<TaskListScreen> {
     setState(() {
       _tasks = nearbyTasks;
       _filter = 'nearby';
+      _searchQuery = '';
+      _searchController.clear();
     });
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('📍 ${nearbyTasks.length} tarefa(s) próxima(s)'),
+          content: Row(
+            children: [
+              const Icon(Icons.location_on, color: Colors.white),
+              const SizedBox(width: 8),
+              Text('${nearbyTasks.length} tarefa(s) próxima(s)'),
+            ],
+          ),
           backgroundColor: Colors.blue,
         ),
       );
@@ -253,13 +501,27 @@ class _TaskListScreenState extends State<TaskListScreen> {
           }
         }
         
+        if (task.serverId != null) {
+          await SyncService.instance.queueOperation(
+            taskId: task.id!,
+            operation: 'DELETE',
+            payload: '{"serverId": "${task.serverId}"}',
+          );
+        }
+        
         await DatabaseService.instance.delete(task.id!);
         await _loadTasks();
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('🗑️ Tarefa deletada'),
+              content: Row(
+                children: [
+                  Icon(Icons.delete, color: Colors.white),
+                  SizedBox(width: 8),
+                  Text('Tarefa deletada'),
+                ],
+              ),
               duration: Duration(seconds: 2),
             ),
           );
@@ -283,11 +545,25 @@ class _TaskListScreenState extends State<TaskListScreen> {
         completed: !task.completed,
         completedAt: !task.completed ? DateTime.now() : null,
         completedBy: !task.completed ? 'manual' : null,
+        updatedAt: DateTime.now(),
+        syncStatus: 'pending',
       );
 
+      setState(() {
+        final index = _tasks.indexWhere((t) => t.id == task.id);
+        if (index != -1) {
+          _tasks[index] = updated;
+        }
+      });
+
       await DatabaseService.instance.update(updated);
-      await _loadTasks();
+      
+      SyncService.instance.queueOperation(
+        taskId: updated.id!,
+        operation: updated.serverId == null ? 'CREATE' : 'UPDATE',
+      );
     } catch (e) {
+      await _loadTasks();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -306,96 +582,171 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Minhas Tarefas'),
+        title: Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'Minhas Tarefas',
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+              decoration: BoxDecoration(
+                color: _isOnline ? Colors.green : Colors.orange,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    _isOnline ? Icons.cloud_done : Icons.cloud_off,
+                    size: 12,
+                    color: Colors.white,
+                  ),
+                  const SizedBox(width: 3),
+                  Text(
+                    _isOnline ? 'On' : 'Off',
+                    style: const TextStyle(
+                      fontSize: 10,
+                      color: Colors.white,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
         backgroundColor: Colors.blue,
         foregroundColor: Colors.white,
         actions: [
           PopupMenuButton<String>(
-            icon: const Icon(Icons.filter_list),
+            icon: const Icon(Icons.sort),
+            tooltip: 'Ordenar',
             onSelected: (value) {
-              if (value == 'nearby') {
-                _filterByNearby();
-              } else {
-                setState(() {
-                  _filter = value;
-                  if (value != 'nearby') _loadTasks();
-                });
-              }
+              setState(() => _sortBy = value);
             },
             itemBuilder: (context) => [
-              const PopupMenuItem(
-                value: 'all',
+              PopupMenuItem(
+                value: 'date',
                 child: Row(
                   children: [
-                    Icon(Icons.list_alt),
-                    SizedBox(width: 8),
-                    Text('Todas'),
+                    Icon(Icons.calendar_today, color: _sortBy == 'date' ? Colors.blue : Colors.black),
+                    const SizedBox(width: 8),
+                    Text('Data', style: TextStyle(color: _sortBy == 'date' ? Colors.blue : Colors.black)),
                   ],
                 ),
               ),
-              const PopupMenuItem(
-                value: 'pending',
+              PopupMenuItem(
+                value: 'priority',
                 child: Row(
                   children: [
-                    Icon(Icons.pending_outlined),
-                    SizedBox(width: 8),
-                    Text('Pendentes'),
+                    Icon(Icons.flag, color: _sortBy == 'priority' ? Colors.blue : Colors.black),
+                    const SizedBox(width: 8),
+                    Text('Prioridade', style: TextStyle(color: _sortBy == 'priority' ? Colors.blue : Colors.black)),
                   ],
                 ),
               ),
-              const PopupMenuItem(
-                value: 'completed',
+              PopupMenuItem(
+                value: 'title',
                 child: Row(
                   children: [
-                    Icon(Icons.check_circle_outline),
-                    SizedBox(width: 8),
-                    Text('Concluídas'),
-                  ],
-                ),
-              ),
-              const PopupMenuItem(
-                value: 'nearby',
-                child: Row(
-                  children: [
-                    Icon(Icons.near_me),
-                    SizedBox(width: 8),
-                    Text('Próximas'),
+                    Icon(Icons.sort_by_alpha, color: _sortBy == 'title' ? Colors.blue : Colors.black),
+                    const SizedBox(width: 8),
+                    Text('Título', style: TextStyle(color: _sortBy == 'title' ? Colors.blue : Colors.black)),
                   ],
                 ),
               ),
             ],
           ),
-          IconButton(
-            icon: const Icon(Icons.info_outline),
-            onPressed: () {
-              showDialog(
-                context: context,
-                builder: (context) => AlertDialog(
-                  title: const Text('💡 Dicas'),
-                  content: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: const [
-                      Text('• Toque no card para editar'),
-                      SizedBox(height: 8),
-                      Text('• Marque como completa com checkbox'),
-                      SizedBox(height: 8),
-                      Text('• Sacuda o celular para completar rápido!'),
-                      SizedBox(height: 8),
-                      Text('• Use filtros para organizar'),
-                      SizedBox(height: 8),
-                      Text('• Adicione fotos e localização'),
-                    ],
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('Entendi'),
-                    ),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.filter_list),
+            tooltip: 'Filtrar',
+            onSelected: (value) {
+              if (value == 'lww_test') {
+                _testLWW();
+              } else {
+                setState(() {
+                  _filter = value;
+                  _loadTasks();
+                });
+              }
+            },
+            itemBuilder: (context) => [
+              PopupMenuItem(
+                value: 'all',
+                child: Row(
+                  children: [
+                    Icon(Icons.list_alt, color: _filter == 'all' ? Colors.blue : Colors.black),
+                    const SizedBox(width: 8),
+                    Text('Todas', style: TextStyle(color: _filter == 'all' ? Colors.blue : Colors.black)),
                   ],
                 ),
-              );
-            },
+              ),
+              PopupMenuItem(
+                value: 'pending',
+                child: Row(
+                  children: [
+                    Icon(Icons.pending_outlined, color: _filter == 'pending' ? Colors.blue : Colors.black),
+                    const SizedBox(width: 8),
+                    Text('Pendentes', style: TextStyle(color: _filter == 'pending' ? Colors.blue : Colors.black)),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'completed',
+                child: Row(
+                  children: [
+                    Icon(Icons.check_circle_outline, color: _filter == 'completed' ? Colors.blue : Colors.black),
+                    const SizedBox(width: 8),
+                    Text('Concluídas', style: TextStyle(color: _filter == 'completed' ? Colors.blue : Colors.black)),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'high_priority',
+                child: Row(
+                  children: [
+                    Icon(Icons.priority_high, color: _filter == 'high_priority' ? Colors.blue : Colors.black),
+                    const SizedBox(width: 8),
+                    Text('Alta Prioridade', style: TextStyle(color: _filter == 'high_priority' ? Colors.blue : Colors.black)),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'with_photo',
+                child: Row(
+                  children: [
+                    Icon(Icons.photo_camera, color: _filter == 'with_photo' ? Colors.blue : Colors.black),
+                    const SizedBox(width: 8),
+                    Text('Com Foto', style: TextStyle(color: _filter == 'with_photo' ? Colors.blue : Colors.black)),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'with_location',
+                child: Row(
+                  children: [
+                    Icon(Icons.location_on, color: _filter == 'with_location' ? Colors.blue : Colors.black),
+                    const SizedBox(width: 8),
+                    Text('Com Localização', style: TextStyle(color: _filter == 'with_location' ? Colors.blue : Colors.black)),
+                  ],
+                ),
+              ),
+              const PopupMenuDivider(),
+              PopupMenuItem(
+                value: 'lww_test',
+                child: Row(
+                  children: [
+                    const Icon(Icons.science, color: Colors.orange),
+                    const SizedBox(width: 8),
+                    Text('Testar LWW', style: TextStyle(color: Colors.orange)),
+                  ],
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -405,7 +756,6 @@ class _TaskListScreenState extends State<TaskListScreen> {
             ? const Center(child: CircularProgressIndicator())
             : Column(
                 children: [
-                  // CARD DE ESTATÍSTICAS
                   Container(
                     margin: const EdgeInsets.all(16),
                     padding: const EdgeInsets.all(20),
@@ -454,7 +804,90 @@ class _TaskListScreenState extends State<TaskListScreen> {
                     ),
                   ),
 
-                  // LISTA DE TAREFAS
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: TextField(
+                      controller: _searchController,
+                      decoration: InputDecoration(
+                        hintText: 'Buscar tarefas...',
+                        prefixIcon: const Icon(Icons.search),
+                        suffixIcon: _searchQuery.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.clear),
+                                onPressed: () {
+                                  setState(() {
+                                    _searchController.clear();
+                                    _searchQuery = '';
+                                  });
+                                },
+                              )
+                            : null,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        filled: true,
+                        fillColor: Colors.grey[100],
+                      ),
+                      onChanged: (value) {
+                        setState(() => _searchQuery = value);
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+
+                  if (_filter != 'all' || _sortBy != 'date' || _searchQuery.isNotEmpty)
+                    Container(
+                      height: 50,
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: ListView(
+                        scrollDirection: Axis.horizontal,
+                        children: [
+                          if (_filter != 'all')
+                            Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: Chip(
+                                avatar: Icon(_getFilterIcon(_filter), size: 16),
+                                label: Text(_getFilterLabel(_filter)),
+                                deleteIcon: const Icon(Icons.close, size: 16),
+                                onDeleted: () {
+                                  setState(() {
+                                    _filter = 'all';
+                                    _loadTasks();
+                                  });
+                                },
+                              ),
+                            ),
+                          if (_sortBy != 'date')
+                            Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: Chip(
+                                avatar: const Icon(Icons.sort, size: 16),
+                                label: Text('Ordenar: ${_getSortLabel(_sortBy)}'),
+                                deleteIcon: const Icon(Icons.close, size: 16),
+                                onDeleted: () {
+                                  setState(() => _sortBy = 'date');
+                                },
+                              ),
+                            ),
+                          if (_searchQuery.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: Chip(
+                                avatar: const Icon(Icons.search, size: 16),
+                                label: Text('"$_searchQuery"'),
+                                deleteIcon: const Icon(Icons.close, size: 16),
+                                onDeleted: () {
+                                  setState(() {
+                                    _searchController.clear();
+                                    _searchQuery = '';
+                                  });
+                                },
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+
                   Expanded(
                     child: filteredTasks.isEmpty
                         ? _buildEmptyState()
@@ -501,25 +934,75 @@ class _TaskListScreenState extends State<TaskListScreen> {
     );
   }
 
+  IconData _getFilterIcon(String filter) {
+    switch (filter) {
+      case 'pending':
+        return Icons.pending_outlined;
+      case 'completed':
+        return Icons.check_circle_outline;
+      case 'high_priority':
+        return Icons.priority_high;
+      case 'with_photo':
+        return Icons.photo_camera;
+      case 'with_location':
+        return Icons.location_on;
+      case 'nearby':
+        return Icons.near_me;
+      default:
+        return Icons.filter_list;
+    }
+  }
+
+  String _getFilterLabel(String filter) {
+    switch (filter) {
+      case 'pending':
+        return 'Pendentes';
+      case 'completed':
+        return 'Concluídas';
+      case 'high_priority':
+        return 'Alta Prioridade';
+      case 'with_photo':
+        return 'Com Foto';
+      case 'with_location':
+        return 'Com Localização';
+      case 'nearby':
+        return 'Próximas';
+      default:
+        return 'Todas';
+    }
+  }
+
+  String _getSortLabel(String sort) {
+    switch (sort) {
+      case 'priority':
+        return 'Prioridade';
+      case 'title':
+        return 'Título';
+      case 'date':
+      default:
+        return 'Data';
+    }
+  }
+
   Widget _buildEmptyState() {
     String message;
     IconData icon;
 
     switch (_filter) {
       case 'pending':
-        message = '🎉 Nenhuma tarefa pendente!';
+        message = 'Nenhuma tarefa pendente!';
         icon = Icons.check_circle_outline;
         break;
       case 'completed':
-        message = '📋 Nenhuma tarefa concluída ainda';
+        message = 'Nenhuma tarefa concluída ainda';
         icon = Icons.pending_outlined;
         break;
       case 'nearby':
-        message = '📍 Nenhuma tarefa próxima';
+        message = 'Nenhuma tarefa próxima';
         icon = Icons.near_me;
         break;
       default:
-        message = '📝 Nenhuma tarefa ainda.\nToque em + para criar!';
+        message = 'Nenhuma tarefa ainda.\nToque em + para criar!';
         icon = Icons.add_task;
     }
 

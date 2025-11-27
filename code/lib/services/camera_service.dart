@@ -14,9 +14,9 @@ class CameraService {
   Future<void> initialize() async {
     try {
       _cameras = await availableCameras();
-      print('✅ CameraService: ${_cameras?.length ?? 0} câmera(s) encontrada(s)');
+      print('CameraService: ${_cameras?.length ?? 0} câmera(s) encontrada(s)');
     } catch (e) {
-      print('⚠️ Erro ao inicializar câmera: $e');
+      print('Erro ao inicializar câmera: $e');
       _cameras = [];
     }
   }
@@ -27,7 +27,7 @@ class CameraService {
     if (!hasCameras) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('❌ Nenhuma câmera disponível'),
+          content: Text('Nenhuma câmera disponível'),
           backgroundColor: Colors.red,
         ),
       );
@@ -56,7 +56,7 @@ class CameraService {
 
       return imagePath;
     } catch (e) {
-      print('❌ Erro ao abrir câmera: $e');
+      print('Erro ao abrir câmera: $e');
       
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -85,10 +85,10 @@ class CameraService {
       }
       
       final savedImage = await File(image.path).copy(savePath);
-      print('✅ Foto salva: ${savedImage.path}');
+      print('Foto salva: ${savedImage.path}');
       return savedImage.path;
     } catch (e) {
-      print('❌ Erro ao salvar foto: $e');
+      print('Erro ao salvar foto: $e');
       rethrow;
     }
   }
@@ -102,7 +102,7 @@ class CameraService {
       }
       return false;
     } catch (e) {
-      print('❌ Erro ao deletar foto: $e');
+      print('Erro ao deletar foto: $e');
       return false;
     }
   }

@@ -20,7 +20,7 @@ class SensorService {
 
   void startShakeDetection(Function() onShake) {
     if (_isActive) {
-      print('⚠️ Detecção já ativa');
+      print('Detecção já ativa');
       return;
     }
     
@@ -32,11 +32,11 @@ class SensorService {
         _detectShake(event);
       },
       onError: (error) {
-        print('❌ Erro no acelerômetro: $error');
+        print('Erro no acelerômetro: $error');
       },
     );
     
-    print('📱 Detecção de shake iniciada');
+    print('Detecção de shake iniciada');
   }
 
   void _detectShake(AccelerometerEvent event) {
@@ -68,7 +68,7 @@ class SensorService {
         await Vibration.vibrate(duration: 100);
       }
     } catch (e) {
-      print('⚠️ Vibração não suportada: $e');
+      print('Vibração não suportada: $e');
     }
   }
 
@@ -77,6 +77,6 @@ class SensorService {
     _accelerometerSubscription = null;
     _onShake = null;
     _isActive = false;
-    print('⏹️ Detecção de shake parada');
+    print('Detecção de shake parada');
   }
 }
