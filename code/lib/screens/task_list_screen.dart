@@ -29,6 +29,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
   StreamSubscription? _connectivitySubscription;
   StreamSubscription? _syncSubscription;
   final TextEditingController _searchController = TextEditingController();
+  Timer? _debounce;
 
   @override
   void initState() {
@@ -44,6 +45,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
     _connectivitySubscription?.cancel();
     _syncSubscription?.cancel();
     _searchController.dispose();
+    _debounce?.cancel();
     super.dispose();
   }
 
@@ -396,11 +398,16 @@ class _TaskListScreenState extends State<TaskListScreen> {
       showDialog(
         context: context,
         builder: (context) => AlertDialog(
-          title: const Row(
+          title: Row(
             children: [
-              Icon(Icons.science, color: Colors.orange),
-              SizedBox(width: 8),
-              Text('Teste LWW Configurado'),
+              const Icon(Icons.science, color: Colors.orange),
+              const SizedBox(width: 8),
+              Expanded(
+                child: const Text(
+                  'Teste LWW Configurado',
+                  softWrap: true,
+                ),
+              ),
             ],
           ),
           content: Column(
@@ -806,31 +813,38 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: TextField(
-                      controller: _searchController,
-                      decoration: InputDecoration(
-                        hintText: 'Buscar tarefas...',
-                        prefixIcon: const Icon(Icons.search),
-                        suffixIcon: _searchQuery.isNotEmpty
-                            ? IconButton(
-                                icon: const Icon(Icons.clear),
-                                onPressed: () {
-                                  setState(() {
-                                    _searchController.clear();
-                                    _searchQuery = '';
-                                  });
-                                },
-                              )
-                            : null,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
+                    child: RepaintBoundary(
+                      child: TextField(
+                        controller: _searchController,
+                        decoration: InputDecoration(
+                          hintText: 'Buscar tarefas...',
+                          prefixIcon: const Icon(Icons.search),
+                          suffixIcon: _searchQuery.isNotEmpty
+                              ? IconButton(
+                                  icon: const Icon(Icons.clear),
+                                  onPressed: () {
+                                    setState(() {
+                                      _searchController.clear();
+                                      _searchQuery = '';
+                                    });
+                                  },
+                                )
+                              : null,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          filled: true,
+                          fillColor: Colors.grey[100],
                         ),
-                        filled: true,
-                        fillColor: Colors.grey[100],
+                        onChanged: (value) {
+                          if (_debounce?.isActive ?? false) _debounce!.cancel();
+                          _debounce = Timer(const Duration(milliseconds: 300), () {
+                            if (mounted) {
+                              setState(() => _searchQuery = value);
+                            }
+                          });
+                        },
                       ),
-                      onChanged: (value) {
-                        setState(() => _searchQuery = value);
-                      },
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -894,21 +908,24 @@ class _TaskListScreenState extends State<TaskListScreen> {
                         : ListView.builder(
                             padding: const EdgeInsets.symmetric(horizontal: 16),
                             itemCount: filteredTasks.length,
+                            cacheExtent: 100,
                             itemBuilder: (context, index) {
                               final task = filteredTasks[index];
-                              return TaskCard(
-                                task: task,
-                                onTap: () async {
-                                  final result = await Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) => TaskFormScreen(task: task),
-                                    ),
-                                  );
-                                  if (result == true) _loadTasks();
-                                },
-                                onDelete: () => _deleteTask(task),
-                                onCheckboxChanged: (value) => _toggleComplete(task),
+                              return RepaintBoundary(
+                                child: TaskCard(
+                                  task: task,
+                                  onTap: () async {
+                                    final result = await Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) => TaskFormScreen(task: task),
+                                      ),
+                                    );
+                                    if (result == true) _loadTasks();
+                                  },
+                                  onDelete: () => _deleteTask(task),
+                                  onCheckboxChanged: (value) => _toggleComplete(task),
+                                ),
                               );
                             },
                           ),

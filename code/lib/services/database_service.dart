@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 import '../models/task.dart';
@@ -191,7 +192,7 @@ class DatabaseService {
       }
     }
     
-    print('Banco migrado de v$oldVersion para v$newVersion');
+    debugPrint('[DB] Banco migrado de v$oldVersion para v$newVersion');
   }
 
   Future<Task> create(Task task) async {
@@ -346,7 +347,7 @@ class DatabaseService {
       where: 'serverId = ?',
       whereArgs: [serverId],
     );
-    print('Simulado: Servidor editou tarefa $serverId com timestamp $serverTimestamp');
+    debugPrint('[DB] Simulado: Servidor editou tarefa $serverId com timestamp $serverTimestamp');
   }
 
   Future<void> incrementSyncRetry_OLD(int queueId) async {

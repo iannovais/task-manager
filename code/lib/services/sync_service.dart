@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import '../models/task.dart';
 import 'database_service.dart';
 import 'connectivity_service.dart';
@@ -19,29 +20,29 @@ class SyncService {
   Future<void> initialize() async {
     ConnectivityService.instance.onConnectivityChanged.listen((isOnline) {
       if (isOnline) {
-        print('Conectividade restaurada - Iniciando sincronização...');
+        debugPrint('[SYNC] Conectividade restaurada - Iniciando sincronização...');
         sync();
       }
     });
 
-    print('SyncService inicializado');
+    debugPrint('[SYNC] SyncService inicializado');
   }
 
   Future<void> sync() async {
     if (_isSyncing) {
-      print('Sincronização já em andamento, aguardando...');
+      debugPrint('[SYNC] Sincronização já em andamento, aguardando...');
       return;
     }
 
     if (!ConnectivityService.instance.isOnline) {
-      print('Offline - Sincronização adiada');
+      debugPrint('[SYNC] Offline - Sincronização adiada');
       _syncController.add('offline');
       return;
     }
 
     final queueCheck = await DatabaseService.instance.getSyncQueue();
     if (queueCheck.isEmpty) {
-      print('Fila de sincronização vazia - nada a fazer');
+      // Fila vazia
       return;
     }
 
@@ -49,15 +50,15 @@ class SyncService {
     _syncController.add('syncing');
 
     try {
-      print('Iniciando sincronização...');
+      debugPrint('[SYNC] Iniciando sincronização...');
 
       await _processSyncQueue();
 
       _syncController.add('success');
-      print('Sincronização concluída com sucesso');
+      debugPrint('[SYNC] Sincronização concluída com sucesso');
     } catch (e) {
       _syncController.add('error');
-      print('Erro na sincronização: $e');
+      debugPrint('[SYNC] Erro na sincronização: $e');
     } finally {
       _isSyncing = false;
     }
@@ -67,11 +68,10 @@ class SyncService {
     final queue = await DatabaseService.instance.getSyncQueue();
 
     if (queue.isEmpty) {
-      print('Fila de sincronização vazia');
       return;
     }
 
-    print('Processando ${queue.length} operação(ões) pendente(s)...');
+    debugPrint('[SYNC] Processando ${queue.length} operação(ões) pendente(s)...');
 
     for (final item in queue) {
       try {
@@ -81,7 +81,7 @@ class SyncService {
         final retryCount = item['retryCount'] as int;
 
         if (retryCount >= 3) {
-          print('Operação $operation para tarefa $taskId falhou após 3 tentativas');
+          // Falhou após 3 tentativas
           await DatabaseService.instance.removeFromSyncQueue(queueId);
           continue;
         }
@@ -116,13 +116,12 @@ class SyncService {
 
         if (success) {
           await DatabaseService.instance.removeFromSyncQueue(queueId);
-          print('Operação $operation para tarefa $taskId sincronizada');
+          debugPrint('[SYNC] Operação $operation para tarefa $taskId sincronizada');
         } else {
           await DatabaseService.instance.incrementSyncRetry(queueId);
-          print('Falha na operação $operation para tarefa $taskId (tentativa ${retryCount + 1}/3)');
         }
       } catch (e) {
-        print('Erro ao processar item da fila: $e');
+        // Erro ao processar item
       }
     }
   }
@@ -140,10 +139,9 @@ class SyncService {
       
       await DatabaseService.instance.update(updated);
       
-      print('CREATE: Tarefa ${updated.title} criada com serverId $serverId');
+      debugPrint('[SYNC] CREATE: Tarefa ${updated.title} criada com serverId $serverId');
       return true;
     } catch (e) {
-      print('Erro ao processar tarefa: $e');
       return false;
     }
   }
@@ -157,17 +155,16 @@ class SyncService {
       final serverTask = await DatabaseService.instance.fetchFromServerMirror(task.serverId!);
 
       if (serverTask == null) {
-        print('Tarefa não existe no servidor, criando...');
         return await _syncCreate(task);
       }
 
-      print('LWW: Comparando timestamps...');
-      print('   Local:    ${task.updatedAt} - "${task.title}"');
-      print('   Servidor: ${serverTask.updatedAt} - "${serverTask.title}"');
+      debugPrint('   [LWW] Comparando timestamps...');
+      debugPrint('   [LWW] Local:    ${task.updatedAt} - "${task.title}"');
+      debugPrint('   [LWW] Servidor: ${serverTask.updatedAt} - "${serverTask.title}"');
 
       if (serverTask.updatedAt.isAfter(task.updatedAt)) {
-        print('CONFLITO: Servidor mais recente! Sobrescrevendo local...');
-        print('Mudando de "${task.title}" para "${serverTask.title}"');
+        debugPrint('   [LWW] CONFLITO: Servidor mais recente! Sobrescrevendo local...');
+        debugPrint('   [LWW] Mudando de "${task.title}" para "${serverTask.title}"');
         
         final merged = serverTask.copyWith(
           id: task.id,
@@ -177,7 +174,7 @@ class SyncService {
         return true;
         
       } else {
-        print('LOCAL mais recente! Enviando para servidor...');
+        debugPrint('[LWW] LOCAL mais recente! Enviando para servidor...');
         
         await DatabaseService.instance.saveToServerMirror(task);
         
@@ -188,7 +185,6 @@ class SyncService {
         return true;
       }
     } catch (e) {
-      print('Erro ao processar atualização: $e');
       return false;
     }
   }

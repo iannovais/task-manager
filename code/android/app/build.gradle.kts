@@ -28,6 +28,13 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        
+        // Disable FrameTracker warnings in debug mode
+        if (project.hasProperty("debug")) {
+            ndk {
+                debugSymbolLevel = "NONE"
+            }
+        }
     }
 
     buildTypes {
